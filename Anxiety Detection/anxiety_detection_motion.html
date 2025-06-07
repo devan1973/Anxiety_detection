@@ -1,0 +1,350 @@
+<!-- 
+    Author: DEVADARSHAN P
+    Date: 2025-04-22
+    Version: 1.0
+    Title: Live Accelerometer Anxiety Detection
+    Description: 
+    This web application uses accelerometer data to detect anxiety levels in real-time by analyzing baseline crossings across the X, Y, and Z axes. The app visualizes the accelerometer data, dynamically detects anxiety levels based on crossing thresholds, and updates the status on the web interface.
+    
+    Features:
+    1. Real-Time Anxiety Detection:
+       - The app continuously monitors accelerometer data (X, Y, Z axes) in real-time and determines anxiety levels by tracking baseline crossings. Baseline crossings occur when the data fluctuates significantly above or below a certain threshold, indicating stress or anxiety.
+    2. Raw Data Visualization:
+       - It visualizes the raw accelerometer data for each axis (X, Y, Z) and displays the baseline as a dashed line on the chart. This helps users track how the accelerometer's data fluctuates over time and compare it to the calculated baseline.
+    3. **User Input for Calibration:**
+       - Users can adjust parameters such as baseline-crossing thresholds and noise thresholds, as well as timeframes for baseline calculation and baseline crossing detection. These settings allow fine-tuning for the detection mechanism based on personal preferences or device characteristics.
+    4. **Anxiety Status Detection:** 
+       - The system counts the number of baseline crossings within the defined timeframes and compares them to a user-defined threshold. If the number of crossings exceeds the threshold, the application flags the data as indicating anxiety. This results in a change in the displayed anxiety status.
+    5. **Web Bluetooth Support:** 
+       - The application integrates with Bluetooth-enabled accelerometer devices via the Web Bluetooth API. It connects to the device, receives data, and processes it in real-time.
+    6. **Dynamic UI Updates:** 
+       - The application continuously updates the anxiety status for each axis and overall anxiety status on the page. It uses dynamic charts that update in real-time to reflect changes in accelerometer data.
+
+    Process Flow:
+    1. The app connects to a Bluetooth-enabled accelerometer device using the Web Bluetooth API.
+    2. It collects accelerometer data in real-time (X, Y, Z axes).
+    3. Baseline values for each axis are calculated by averaging recent data points.
+    4. The app tracks the crossings above and below the baseline for each axis. If the crossings exceed a defined threshold within a certain time period, anxiety is detected.
+    5. The user can adjust the parameters for baseline calculation, crossing detection, and thresholds using the provided control panel.
+    6. The charts are updated with real-time accelerometer data, and the anxiety status is displayed as either "Normal" or "Anxious" based on the detected crossings.
+    7. The app provides a continuous real-time feedback loop, displaying updates on the accelerometer data, baseline, and anxiety status.
+
+    Purpose:
+    This application serves as a tool to help individuals monitor their anxiety levels using accelerometer data. It can be useful for stress management, behavioral analysis, or even integrating with wearable devices for a more comprehensive health monitoring system.
+
+    The system can be further extended to integrate more sensors or more complex machine learning algorithms for detecting anxiety based on multiple variables.
+-->
+<!DOCTYPE html> 
+<html lang="en">
+<head>
+  <!-- Set character encoding to UTF-8, ensuring proper character representation -->
+  <meta charset="UTF-8" />
+  <!-- Set viewport settings for mobile responsiveness (scaling, etc.) -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <!-- Page title -->
+  <title>Live Accelerometer Anxiety Detection</title>
+  <style>
+    /* Basic styles for the body, charts, and control elements */
+    body { font-family: Arial, sans-serif; text-align: center; margin-top: 20px; }
+    canvas { width: 100% !important; height: 300px !important; margin-top: 20px; }
+    .status { font-weight: bold; margin: 10px; }
+    #mainTitle { font-size: 28px; font-weight: bold; }
+    #anxietyStatus { font-size: 20px; color: darkred; }
+    .control-panel { margin-top: 20px; margin-bottom: 20px; }
+    .control-panel label { margin-right: 10px; }
+    .control-panel input { margin-right: 20px; width: 80px; }
+    .anxiety-alert { color: darkred; font-size: 16px; font-weight: bold; }
+    #deviceNotification { font-size: 18px; margin-top: 20px; color: green; }
+  </style>
+</head>
+<body>
+
+  <!-- Main Title for the status of the device -->
+  <h1 id="mainTitle" style="color: green;">Status: Normal</h1>
+  
+  <!-- Button to connect to the device -->
+  <button id="connectButton">Connect to Device</button>
+
+  <!-- Notification for device connection status -->
+  <div id="deviceNotification">No device connected</div>
+
+  <div class="control-panel">
+    <h3>Adjust Detection Parameters</h3>
+    <!-- Input controls for baseline threshold, noise, and timeframes for anxiety detection -->
+    <label for="crossingThreshold">Baseline-Crossing Threshold:</label>
+    <input type="number" id="crossingThreshold" value="10" min="1" step="1" />
+    <br />
+    <label for="noiseThreshold">Noise Threshold (for Moving Average):</label>
+    <input type="number" id="noiseThreshold" value="5" min="0" step="1" />
+    <br />
+    <label for="baselineCalculationTimeframe">Baseline Calculation Timeframe (in seconds):</label>
+    <input type="number" id="baselineCalculationTimeframe" value="1.5" min="0.1" step="0.1" />
+    <br />
+    <label for="baselineCrossingTimeframe">Baseline Crossing Timeframe (in seconds):</label>
+    <input type="number" id="baselineCrossingTimeframe" value="1.5" min="0.1" step="0.1" />
+    <br />
+  </div>
+
+  <!-- Section to display raw accelerometer data -->
+  <div id="accelerometerData">Accelerometer Data: --</div>
+
+  <!-- Section for each axis (X, Y, Z) to show data and charts -->
+  <h2>Raw Accelerometer Data</h2>
+  <canvas id="rawChart"></canvas>
+  <div id="rawAlert" class="anxiety-alert">Anxiety Status: --</div>
+
+  <h2>X-Axis Data</h2>
+  <div class="status" id="xStatus">X Status: --</div>
+  <canvas id="xChart"></canvas>
+  <div id="xAlert" class="anxiety-alert">Anxiety Status: --</div>
+
+  <h2>Y-Axis Data</h2>
+  <div class="status" id="yStatus">Y Status: --</div>
+  <canvas id="yChart"></canvas>
+  <div id="yAlert" class="anxiety-alert">Anxiety Status: --</div>
+
+  <h2>Z-Axis Data</h2>
+  <div class="status" id="zStatus">Z Status: --</div>
+  <canvas id="zChart"></canvas>
+  <div id="zAlert" class="anxiety-alert">Anxiety Status: --</div>
+
+  <!-- Section for displaying overall anxiety status -->
+  <h2>Overall Anxiety Status</h2>
+  <div class="status" id="anxietyStatus">Status: --</div>
+
+  <!-- Include Chart.js library to create charts -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <script>
+    // Initial variables to store accelerometer data and user-defined settings
+    let rawData = { x: [], y: [], z: [], time: [] };
+    let maxDataPoints = 300;  // Limit the number of data points stored
+    let baselineCalculationTimeframe = parseFloat(document.getElementById('baselineCalculationTimeframe').value);
+    let baselineCrossingTimeframe = parseFloat(document.getElementById('baselineCrossingTimeframe').value);
+    let crossingThreshold = parseInt(document.getElementById('crossingThreshold').value);
+    let noiseThreshold = parseInt(document.getElementById('noiseThreshold').value);
+    let connectedDeviceName = null;
+
+    // Function to create a chart for each axis (X, Y, or Z)
+    function createSingleAxisChart(canvasId, axis, color) {
+      return new Chart(document.getElementById(canvasId).getContext('2d'), {
+        type: 'line',
+        data: {
+          labels: [],
+          datasets: [
+            { label: `${axis} Axis`, data: [], borderColor: color, fill: false },
+            { label: 'Baseline', data: [], borderColor: 'rgba(0,0,0,0.5)', borderDash: [10,5], fill: false }
+          ]
+        },
+        options: {
+          responsive: true,
+          animation: false,
+          scales: {
+            x: { title: { display: true, text: 'Time (s)' }},
+            y: { title: { display: true, text: 'Acceleration' }}
+          }
+        }
+      });
+    }
+
+    // Create chart for raw accelerometer data (X, Y, Z axes)
+    function createRawChart() {
+      return new Chart(document.getElementById('rawChart').getContext('2d'), {
+        type: 'line',
+        data: {
+          labels: [],
+          datasets: [
+            { label: 'X Raw', data: [], borderColor: 'rgb(255,99,132)', fill: false },
+            { label: 'Y Raw', data: [], borderColor: 'rgb(54,162,235)', fill: false },
+            { label: 'Z Raw', data: [], borderColor: 'rgb(75,192,192)', fill: false }
+          ]
+        },
+        options: {
+          responsive: true,
+          animation: false,
+          scales: {
+            x: { title: { display: true, text: 'Time (s)' }},
+            y: { title: { display: true, text: 'Acceleration' }}
+          }
+        }
+      });
+    }
+
+    // Initialize charts for raw data and each axis (X, Y, Z)
+    const rawChart = createRawChart();
+    const xChart = createSingleAxisChart('xChart', 'X', 'rgb(255,99,132)');
+    const yChart = createSingleAxisChart('yChart', 'Y', 'rgb(54,162,235)');
+    const zChart = createSingleAxisChart('zChart', 'Z', 'rgb(75,192,192)');
+
+    // Function to calculate baseline (average value of last N seconds)
+    function calculateBaseline(data, currentTime) {
+      const startTime = currentTime - baselineCalculationTimeframe;
+      const recentData = [];
+
+      // Filter data from the last N seconds
+      for (let i = 0; i < data.length; i++) {
+        if (parseFloat(rawData.time[i]) >= startTime) {
+          recentData.push(data[i]);
+        }
+      }
+
+      // Return average of recent data
+      const average = recentData.reduce((sum, val) => sum + val, 0) / recentData.length || 0;
+      return average;
+    }
+
+    // Function to count zero-crossings in the data (when value crosses baseline)
+    function countCrossings(data, baseline, currentTime) {
+      let crossingCount = 0;
+      let prevState = null;  // Keeps track of the previous state (above, below, or neutral)
+      const startTime = currentTime - baselineCrossingTimeframe;
+
+      // Loop through the data and count crossing events
+      for (let i = 0; i < data.length; i++) {
+        if (parseFloat(rawData.time[i]) >= startTime) {
+          const value = data[i];
+          let currentState;
+
+          if (value > baseline + noiseThreshold) {
+            currentState = 'above';
+          } else if (value < baseline - noiseThreshold) {
+            currentState = 'below';
+          } else {
+            currentState = 'neutral';
+          }
+
+          // Detect a crossing (from above to below or below to above)
+          if ((prevState === 'above' && currentState === 'below') ||
+              (prevState === 'below' && currentState === 'above')) {
+            crossingCount++;
+          }
+
+          if (currentState !== 'neutral') {
+            prevState = currentState;
+          }
+        }
+      }
+
+      return crossingCount;
+    }
+
+    // Update the charts and check for anxiety based on accelerometer data
+    function updateCharts() {
+      const currentTime = parseFloat(rawData.time[rawData.time.length - 1] || 0);
+
+      // Update the raw accelerometer chart with data for X, Y, Z
+      rawChart.data.labels = rawData.time;
+      rawChart.data.datasets[0].data = rawData.x;
+      rawChart.data.datasets[1].data = rawData.y;
+      rawChart.data.datasets[2].data = rawData.z;
+      rawChart.update();
+
+      let isAnxious = false;
+
+      // Check anxiety status for each axis (X, Y, Z)
+      ['x', 'y', 'z'].forEach(axis => {
+        const chart = axis === 'x' ? xChart : axis === 'y' ? yChart : zChart;
+        const statusElement = document.getElementById(`${axis}Status`);
+        const alertElement = document.getElementById(`${axis}Alert`);
+
+        const baseline = calculateBaseline(rawData[axis], currentTime);
+        const crossingCount = countCrossings(rawData[axis], baseline, currentTime);
+        const axisAnxious = crossingCount >= crossingThreshold;
+
+        if (axisAnxious) isAnxious = true;
+
+        // Update axis chart and status text
+        chart.data.labels = rawData.time;
+        chart.data.datasets[0].data = rawData[axis];
+        chart.data.datasets[1].data = new Array(rawData.time.length).fill(baseline);
+        chart.update();
+
+        statusElement.textContent = `${axis.toUpperCase()} Status: ${axisAnxious ? 'Anxiety' : 'Normal'} (Crossings: ${crossingCount})`;
+        alertElement.textContent = axisAnxious ? 'Anxiety Detected' : 'No Anxiety Detected';
+        alertElement.style.color = axisAnxious ? 'red' : 'green';
+      });
+
+      // Update overall anxiety status
+      const statusText = isAnxious ? 'Status: Anxious' : 'Status: Normal';
+      document.getElementById('mainTitle').textContent = statusText;
+      document.getElementById('mainTitle').style.color = isAnxious ? 'red' : 'green';
+      document.getElementById('anxietyStatus').textContent = statusText;
+
+      // Request the next animation frame to update in real-time
+      requestAnimationFrame(updateCharts);
+    }
+
+    // Start the chart updates
+    requestAnimationFrame(updateCharts);
+
+    // Connect to the accelerometer device via Bluetooth and start listening for data
+    async function connectToAccelerometerDevice() {
+      try {
+        // Request a Bluetooth device
+        const device = await navigator.bluetooth.requestDevice({
+          acceptAllDevices: true,
+          optionalServices: ['00030000-78fc-48fe-8e23-433b3a1942d0']
+        });
+
+        // Connect to the device and get the required services and characteristics
+        const server = await device.gatt.connect();
+        const service = await server.getPrimaryService('00030000-78fc-48fe-8e23-433b3a1942d0');
+        const characteristic = await service.getCharacteristic('00030002-78fc-48fe-8e23-433b3a1942d0');
+
+        // Store the connected device name
+        connectedDeviceName = device.name;
+        document.getElementById('deviceNotification').textContent = `Connected to: ${connectedDeviceName}`;
+
+        // Start notifications and listen for changes in the accelerometer data
+        characteristic.startNotifications();
+        characteristic.addEventListener('characteristicvaluechanged', (event) => {
+          const value = event.target.value;
+          const x = value.getInt16(0, true);
+          const y = value.getInt16(2, true);
+          const z = value.getInt16(4, true);
+          const currentTime = (Date.now() / 1000).toFixed(2);
+
+          // Add new accelerometer data
+          rawData.x.push(x);
+          rawData.y.push(y);
+          rawData.z.push(z);
+          rawData.time.push(currentTime);
+
+          // Limit the number of stored data points
+          if (rawData.x.length > maxDataPoints) {
+            rawData.x.shift(); rawData.y.shift(); rawData.z.shift(); rawData.time.shift();
+          }
+
+          document.getElementById('accelerometerData').textContent = `Accelerometer Data: x=${x}, y=${y}, z=${z}`;
+        });
+
+      } catch (error) {
+        // Handle errors if the device connection fails
+        console.error(error);
+        document.getElementById('accelerometerData').textContent = `Error: ${error}`;
+      }
+    }
+
+    // Event listeners for parameter inputs to update values dynamically
+    document.getElementById('crossingThreshold').addEventListener('input', (e) => {
+      crossingThreshold = parseInt(e.target.value);
+    });
+
+    document.getElementById('noiseThreshold').addEventListener('input', (e) => {
+      noiseThreshold = parseInt(e.target.value);
+    });
+
+    document.getElementById('baselineCalculationTimeframe').addEventListener('input', (e) => {
+      baselineCalculationTimeframe = parseFloat(e.target.value);  // Dynamically adjust baseline calculation time frame
+    });
+
+    document.getElementById('baselineCrossingTimeframe').addEventListener('input', (e) => {
+      baselineCrossingTimeframe = parseFloat(e.target.value);  // Dynamically adjust baseline crossing time frame
+    });
+
+    // Event listener for the "Connect to Device" button
+    document.getElementById('connectButton').addEventListener('click', connectToAccelerometerDevice);
+  </script>
+
+</body>
+</html>

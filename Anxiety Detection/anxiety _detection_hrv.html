@@ -1,0 +1,411 @@
+<!--
+  =============================================================
+  Real-Time Heart Rate Monitor Web App
+  =============================================================
+
+    Author: DEVADARSHAN P
+    Date: 2025-03-22
+    Version: 1.0
+    Title: Live hrv Anxiety Detection
+  📌 Description:
+  This is a self-contained web application that connects to a 
+  Bluetooth-compatible heart rate monitor using the Web Bluetooth API.
+  It retrieves real-time heart rate data (BPM) and calculates 
+  the inter-beat interval (IBI) from it.
+
+  The app visualizes this data using live-updating charts (via Chart.js),
+  computes statistical metrics (mean, standard deviation, and Bollinger Bands),
+  and displays a warning (sound + vibration) if the readings are outside normal ranges.
+
+  Additionally, it logs average values and standard deviations every 5 seconds
+  into a summary table for further review.
+
+  -------------------------------------------------------------
+  🧩 Main Features:
+  - Connects to heart rate devices via Web Bluetooth API
+  - Real-time visualization of:
+      • Heart Rate (BPM)
+      • Inter-Beat Interval (IBI in seconds)
+  - Bollinger Band-based anomaly detection
+  - Audio & vibration alerts on abnormal readings
+  - Summary table logs every 5 seconds of average data
+
+  -------------------------------------------------------------
+  🛠️ Technologies Used:
+  - HTML5 & CSS3 for structure and layout
+  - JavaScript for data processing and Bluetooth communication
+  - Chart.js for real-time data visualization
+  - Web Bluetooth API for connecting to BLE heart rate devices
+  - Base64-encoded embedded audio for alerts (no external files needed)
+
+  -------------------------------------------------------------
+  📋 Requirements:
+  - A browser with Web Bluetooth API support (e.g., Google Chrome)
+  - HTTPS hosting (Web Bluetooth requires a secure origin)
+  - A heart rate monitor that supports the standard 'heart_rate' GATT service
+
+  📦 Dependencies:
+  - Chart.js loaded via CDN
+
+  -------------------------------------------------------------
+  💡 How to Use:
+  1. Click the "Connect to Heart Rate Device" button.
+  2. Select a supported BLE heart rate monitor.
+  3. View live charts and status.
+  4. Monitor table for historical trends.
+
+  =============================================================
+-->
+
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Live Heart Rate</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      text-align: center;
+      margin-top: 50px;
+    }
+    #heartRateDisplay {
+      font-size: 30px;
+      font-weight: bold;
+      margin-bottom: 10px;
+    }
+    canvas {
+      width: 80% !important;
+      height: 300px !important;
+      margin-top: 20px;
+    }
+    #connectButton {
+      padding: 10px 20px;
+      font-size: 16px;
+      cursor: pointer;
+      margin-top: 20px;
+    }
+    table {
+      width: 80%;
+      margin: 20px auto;
+      border-collapse: collapse;
+    }
+    table, th, td {
+      border: 1px solid black;
+    }
+    th, td {
+      padding: 10px;
+      text-align: center;
+    }
+    th {
+      background-color: #f2f2f2;
+    }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <h1>Live Heart Rate</h1>
+  <button id="connectButton">Connect to Device</button>
+  <div id="heartRateDisplay"></div>
+  <div id="liveHeartRate">Current Heart Rate: -- BPM</div>
+
+  <canvas id="heartRateChart"></canvas>
+  <canvas id="ibiChart"></canvas>
+
+  <h2>Heart Rate and IBI Data (Averages for 5 Seconds)</h2>
+  <table id="heartRateTable">
+    <thead>
+      <tr>
+        <th>Date</th>
+        <th>Time</th>
+        <th>Heart Rate (BPM)</th>
+        <th>Heart Rate Std Dev</th>
+        <th>IBI (Seconds)</th>
+        <th>IBI Std Dev</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <script>
+    let heartRates = [];
+    let ibis = [];
+    let timeStamps = [];
+    const maxDataPoints = 60;
+    let lastUpdateTime = Date.now();
+    let upperHeartRateBand = [];
+    let lowerHeartRateBand = [];
+    let upperIbiBand = [];
+    let lowerIbiBand = [];
+    let alarmSound = new Audio('https://www.soundjay.com/button/beep-07.wav');
+    let startTime;
+
+    const heartRateCtx = document.getElementById('heartRateChart').getContext('2d');
+    const heartRateChart = new Chart(heartRateCtx, {
+      type: 'line',
+      data: {
+        labels: timeStamps,
+        datasets: [
+          {
+            label: 'Heart Rate (BPM)',
+            data: heartRates,
+            borderColor: 'rgb(75, 192, 192)',
+            fill: false,
+            lineTension: 0.1
+          },
+          {
+            label: 'Upper Bollinger Band',
+            data: upperHeartRateBand,
+            borderColor: 'rgba(75, 192, 192, 0.5)',
+            fill: false,
+            borderDash: [5, 5],
+            lineTension: 0.1,
+            pointRadius: 0
+          },
+          {
+            label: 'Lower Bollinger Band',
+            data: lowerHeartRateBand,
+            borderColor: 'rgba(75, 192, 192, 0.5)',
+            fill: false,
+            borderDash: [5, 5],
+            lineTension: 0.1,
+            pointRadius: 0
+          },
+          {
+            label: 'Bollinger Band Fill',
+            data: upperHeartRateBand.map((_, i) => ({
+              x: timeStamps[i],
+              y: upperHeartRateBand[i]
+            })),
+            backgroundColor: 'rgba(75, 192, 192, 0.2)',
+            fill: true,
+            borderWidth: 0
+          },
+          {
+            label: 'Lower Bollinger Band Fill',
+            data: lowerHeartRateBand.map((_, i) => ({
+              x: timeStamps[i],
+              y: lowerHeartRateBand[i]
+            })),
+            backgroundColor: 'rgba(75, 192, 192, 0.2)',
+            fill: '-1',
+            borderWidth: 0
+          }
+        ]
+      },
+      options: {
+        scales: {
+          x: {
+            type: 'linear',
+            position: 'bottom',
+            title: {
+              display: true,
+              text: 'Time (s)'
+            }
+          },
+          y: {
+            beginAtZero: false,
+            suggestedMin: 40,
+            suggestedMax: 200,
+            title: {
+              display: true,
+              text: 'Heart Rate (BPM)'
+            }
+          }
+        }
+      }
+    });
+
+    const ibiCtx = document.getElementById('ibiChart').getContext('2d');
+    const ibiChart = new Chart(ibiCtx, {
+      type: 'line',
+      data: {
+        labels: timeStamps,
+        datasets: [
+          {
+            label: 'IBI (Seconds)',
+            data: ibis,
+            borderColor: 'rgb(255, 159, 64)',
+            fill: false,
+            lineTension: 0.1
+          },
+          {
+            label: 'Upper Bollinger Band',
+            data: upperIbiBand,
+            borderColor: 'rgba(255, 159, 64, 0.5)',
+            fill: false,
+            borderDash: [5, 5],
+            lineTension: 0.1,
+            pointRadius: 0
+          },
+          {
+            label: 'Lower Bollinger Band',
+            data: lowerIbiBand,
+            borderColor: 'rgba(255, 159, 64, 0.5)',
+            fill: false,
+            borderDash: [5, 5],
+            lineTension: 0.1,
+            pointRadius: 0
+          },
+          {
+            label: 'Bollinger Band Fill',
+            data: upperIbiBand.map((_, i) => ({
+              x: timeStamps[i],
+              y: upperIbiBand[i]
+            })),
+            backgroundColor: 'rgba(255, 159, 64, 0.2)',
+            fill: true,
+            borderWidth: 0
+          },
+          {
+            label: 'Lower Bollinger Band Fill',
+            data: lowerIbiBand.map((_, i) => ({
+              x: timeStamps[i],
+              y: lowerIbiBand[i]
+            })),
+            backgroundColor: 'rgba(255, 159, 64, 0.2)',
+            fill: '-1',
+            borderWidth: 0
+          }
+        ]
+      },
+      options: {
+        scales: {
+          x: {
+            type: 'linear',
+            position: 'bottom',
+            title: {
+              display: true,
+              text: 'Time (s)'
+            }
+          },
+          y: {
+            beginAtZero: false,
+            suggestedMin: 0.5,
+            suggestedMax: 1.5,
+            title: {
+              display: true,
+              text: 'IBI (Seconds)'
+            }
+          }
+        }
+      }
+    });
+
+    // Updated efficient mean + stddev function
+    function calculateMeanAndStandardDeviation(values) {
+      const { sum, sumSq } = values.reduce((acc, val) => {
+        val = parseFloat(val);
+        acc.sum += val;
+        acc.sumSq += val * val;
+        return acc;
+      }, { sum: 0, sumSq: 0 });
+
+      const mean = sum / values.length;
+      const variance = (sumSq / values.length) - (mean * mean);
+      const stdDev = Math.sqrt(variance);
+      return { mean, stdDev };
+    }
+
+    function calculateBollingerBands(values) {
+      const { mean, stdDev } = calculateMeanAndStandardDeviation(values);
+      const upperBand = mean + (3 * stdDev);
+      const lowerBand = mean - (3 * stdDev);
+      return { upperBand, lowerBand };
+    }
+
+    async function connectToHeartRateDevice() {
+      try {
+        const device = await navigator.bluetooth.requestDevice({
+          filters: [{ services: ['heart_rate'] }]
+        });
+
+        document.getElementById('heartRateDisplay').textContent = `Connected to ${device.name}`;
+        const server = await device.gatt.connect();
+        const service = await server.getPrimaryService('heart_rate');
+        const characteristic = await service.getCharacteristic('heart_rate_measurement');
+        characteristic.startNotifications();
+
+        characteristic.addEventListener('characteristicvaluechanged', (event) => {
+          const value = event.target.value;
+          const heartRate = value.getUint8(1);
+          const ibi = (60 / heartRate).toFixed(3);
+
+          document.getElementById('liveHeartRate').textContent = `Current Heart Rate: ${heartRate} BPM`;
+          const currentTime = (Date.now() - startTime) / 1000;
+
+          timeStamps.push(currentTime);
+          heartRates.push(heartRate);
+          ibis.push(ibi);
+
+          if (heartRates.length > maxDataPoints) {
+            heartRates.shift();
+            timeStamps.shift();
+          }
+          if (ibis.length > maxDataPoints) {
+            ibis.shift();
+          }
+
+          const heartRateBands = calculateBollingerBands(heartRates.slice(-5));
+          const ibiBands = calculateBollingerBands(ibis.slice(-5));
+
+          upperHeartRateBand.push(heartRateBands.upperBand);
+          lowerHeartRateBand.push(heartRateBands.lowerBand);
+          upperIbiBand.push(ibiBands.upperBand);
+          lowerIbiBand.push(ibiBands.lowerBand);
+
+          if (upperHeartRateBand.length > maxDataPoints) {
+            upperHeartRateBand.shift();
+            lowerHeartRateBand.shift();
+          }
+          if (upperIbiBand.length > maxDataPoints) {
+            upperIbiBand.shift();
+            lowerIbiBand.shift();
+          }
+
+          if (ibi < ibiBands.lowerBand || ibi > ibiBands.upperBand || heartRate < heartRateBands.lowerBand || heartRate > heartRateBands.upperBand) {
+            if (navigator.vibrate) {
+              navigator.vibrate([1000, 500, 1000]);
+            }
+            alarmSound.play();
+          }
+
+          heartRateChart.update();
+          ibiChart.update();
+
+          if (Date.now() - lastUpdateTime >= 5000) {
+            calculateAndAddAveragesToTable();
+            lastUpdateTime = Date.now();
+          }
+        });
+      } catch (error) {
+        console.log(error);
+        document.getElementById('heartRateDisplay').textContent = `Error: ${error}`;
+      }
+    }
+
+    document.getElementById('connectButton').addEventListener('click', () => {
+      startTime = Date.now();
+      connectToHeartRateDevice();
+    });
+
+    function calculateAndAddAveragesToTable() {
+      const heartRateAvg = heartRates.slice(-5).reduce((sum, rate) => sum + rate, 0) / 5;
+      const ibiAvg = ibis.slice(-5).reduce((sum, rate) => sum + parseFloat(rate), 0) / 5;
+
+      const { mean: ibiMean, stdDev: ibiStandardDeviation } = calculateMeanAndStandardDeviation(ibis.slice(-5));
+      const { mean: heartRateMean, stdDev: heartRateStandardDeviation } = calculateMeanAndStandardDeviation(heartRates.slice(-5));
+
+      const table = document.getElementById('heartRateTable').getElementsByTagName('tbody')[0];
+      const newRow = table.insertRow(table.rows.length);
+      newRow.insertCell(0).textContent = new Date().toLocaleDateString();
+      newRow.insertCell(1).textContent = new Date().toLocaleTimeString();
+      newRow.insertCell(2).textContent = heartRateAvg.toFixed(2);
+      newRow.insertCell(3).textContent = heartRateStandardDeviation.toFixed(2);
+      newRow.insertCell(4).textContent = ibiAvg.toFixed(2);
+      newRow.insertCell(5).textContent = ibiStandardDeviation.toFixed(2);
+    }
+  </script>
+</body>
+</html>
